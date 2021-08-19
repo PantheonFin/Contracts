@@ -1353,8 +1353,8 @@ contract $DRACHMA is ERC20, Ownable {
         _operator = _msgSender();
 
         uint256 _burnRate = 7;
-        uint256 _devFee = 1;
-        uint256 _marketingFee = 2;
+        uint256 _devFee = 2;
+        uint256 _marketingFee = 1;
         uint256 _distributeFee = 10;
 
         burnRate = _burnRate;
