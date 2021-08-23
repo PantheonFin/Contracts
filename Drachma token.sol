@@ -1353,8 +1353,8 @@ contract $DRACHMA is ERC20, Ownable {
         _operator = _msgSender();
 
         uint256 _burnRate = 7;
-        uint256 _devFee = 2;
-        uint256 _marketingFee = 1;
+        uint256 _devFee = 1;
+        uint256 _marketingFee = 2;
         uint256 _distributeFee = 10;
 
         burnRate = _burnRate;
@@ -1596,7 +1596,7 @@ contract $DRACHMA is ERC20, Ownable {
         bool takeFee = true;
 
         // if any account belongs to _isExcludedFromFee account then remove the fee
-        if(_isExcludedFromFees[from] || _isExcludedFromFees[to] || from == address(dividendTracker)) {
+        if(_isExcludedFromFees[from] || _isExcludedFromFees[to] || from == address(dividendTracker) || to == address(dividendTracker)) {
             takeFee = false;
         }
 
@@ -1636,16 +1636,20 @@ contract $DRACHMA is ERC20, Ownable {
         if(!swapping && takeFee) {
             uint256 gas = gasForProcessing;
             
-            dividendTracker.startProcess();
-
-            (uint256 iterations, uint256 claims, uint256 lastProcessedIndex) = dividendTracker.process(gas);
-            emit ProcessedDividendTracker(iterations, claims, lastProcessedIndex, false, gas, tx.origin);
+            MasterChef master = dividendTracker.getMaster();
+            if(address(master) != address(0))
+            {
+                dividendTracker.startProcess();
+    
+                (uint256 iterations, uint256 claims, uint256 lastProcessedIndex) = dividendTracker.process(gas);
+                emit ProcessedDividendTracker(iterations, claims, lastProcessedIndex, false, gas, tx.origin);
+            }
         }
     }
 
     function sendDividends(uint256 tokens) private {
         _transfer(address(this), address(dividendTracker), tokens);
-        dividendTracker.distributeDividends(tokens);
+        // dividendTracker.distributeDividends(tokens);
         emit SendDividends(tokens);
     }
     
