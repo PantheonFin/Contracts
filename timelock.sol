@@ -264,11 +264,11 @@ contract Timelock {
 
 
     constructor() public {
-        // require(delay_ >= MINIMUM_DELAY, "Timelock::constructor: Delay must exceed minimum delay.");
-        // require(delay_ <= MAXIMUM_DELAY, "Timelock::constructor: Delay must not exceed maximum delay.");
+     require(delay_ >= MINIMUM_DELAY, "Timelock::constructor: Delay must exceed minimum delay.");
+     require(delay_ <= MAXIMUM_DELAY, "Timelock::constructor: Delay must not exceed maximum delay.");
 
-        admin = 0xe59ec378c5bd6e2CBEBCabF8F23fC323bFcD63C2;
-        delay = 43200;
+        admin = admin_;
+        delay = delay_;
         admin_initialized = false;
     }
 
