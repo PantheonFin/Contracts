@@ -594,20 +594,16 @@ library SafeMathUint {
 
 /*
 MIT License
-
 Copyright (c) 2018 requestnetwork
 Copyright (c) 2018 Fragments, Inc.
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
-
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
-
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -843,7 +839,6 @@ contract DividendPayingToken is ERC20, DividendPayingTokenInterface, DividendPay
       withdrawnDividends[user] = withdrawnDividends[user].add(_withdrawableDividend);
       emit DividendWithdrawn(user, _withdrawableDividend);
       token.transfer(user, _withdrawableDividend);
-
       return _withdrawableDividend;
     }
     */
@@ -1277,7 +1272,7 @@ interface IUniswapV2Router02 is IUniswapV2Router01 {
     ) external;
 }
 
-contract $DRACHMA is ERC20, Ownable {
+contract DRACHMA is ERC20, Ownable {
     using SafeMath for uint256;
 
     IUniswapV2Router02 public uniswapV2Router;
@@ -1349,13 +1344,13 @@ contract $DRACHMA is ERC20, Ownable {
         _;
     }
 
-    constructor(address _marketingWallet, address _devWallet) public ERC20("$DRACHMA", "$Drach") {
+    constructor(address _marketingWallet, address _devWallet) public ERC20("DRACHMA", "$Drach") {
         _operator = _msgSender();
 
-        uint256 _burnRate = 7;
-        uint256 _devFee = 1;
-        uint256 _marketingFee = 2;
-        uint256 _distributeFee = 10;
+        uint256 _burnRate = 3;
+        uint256 _devFee = 2;
+        uint256 _marketingFee = 1;
+        uint256 _distributeFee = 4;
 
         burnRate = _burnRate;
         devFee = _devFee;
@@ -1387,7 +1382,7 @@ contract $DRACHMA is ERC20, Ownable {
         if(owner() != _devWallet && _devWallet != _marketingWallet)
             excludeFromFees(_devWallet, true);
 
-        mint(owner(), 1000000000 * (10**18));
+        mint(owner(), 5000000 * (10**18));
     }
 
     receive() external payable {
