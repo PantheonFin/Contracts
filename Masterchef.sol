@@ -1051,4 +1051,5 @@ contract MasterChef is Ownable, ReentrancyGuard {
     function set$DrachPerBlock(uint256 _$DrachPerBlock) public onlyOwner {
         $DrachPerBlock = _$DrachPerBlock;
     }
+
 }
