@@ -1,0 +1,4 @@
+start RPC server using:
+
+ganache-cli -p 8555 -i 5895 --allowUnlimitedContractSize --gasLimit 99999999
+
