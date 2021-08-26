@@ -745,6 +745,8 @@ interface $DRACHMA {
     function mint(address user, uint256 amount) external;
 
     function setBalance(address user, uint256 amount) external;
+    
+    function totalSupply() external view returns (uint256);
 }
 
 // MasterChef is the master of $Drach. He can make $Drach and he is a fair guy.
@@ -762,7 +764,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     struct UserInfo {
         uint256 amount;         // How many LP tokens the user has provided.
         uint256 rewardDebt;     // Reward debt. See explanation below.
-        uint256 rewardLockedUp;  // Reward locked up
+       // uint256 rewardLockedUp;  // Reward locked up
         //
         // We do some fancy math here. Basically, any point in time, the amount of $Drachs
         // entitled to a user but is pending to be distributed is:
@@ -783,6 +785,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         uint256 lastRewardBlock;  // Last block number that $Drachs distribution occurs.
         uint256 acc$DrachPerShare;   // Accumulated $Drachs per share, times 1e12. See below.
         uint16 depositFeeBP;      // Deposit fee in basis points
+        uint256 lpSupply; 
     }
 
     // The $Drach TOKEN!
@@ -795,8 +798,13 @@ contract MasterChef is Ownable, ReentrancyGuard {
     uint256 public $DrachPerBlock = 10 ** 18;
     // Bonus muliplier for early $Drach makers.
     uint256 public constant BONUS_MULTIPLIER = 1;
+    //Max suplly of $DRACHMA
+     uint256 constant max_$Drach_supply = 1000000 * 10 ** 18;
+     // Maximum emission rate of Drachma
+     uint256 public constant MAXIMUM_EMISSION_RATE = 10 * 10 ** 18;
+
     // Max harvest interval: 14 days.
-    uint256 public constant MAXIMUM_HARVEST_INTERVAL = 14 days;
+    //uint256 public constant MAXIMUM_HARVEST_INTERVAL = 14 days;
 
     // Info of each pool.
     PoolInfo[] public poolInfo;
@@ -807,14 +815,17 @@ contract MasterChef is Ownable, ReentrancyGuard {
     // The block number when $Drach mining starts.
     uint256 public startBlock;
     // Total locked up rewards
-    uint256 public totalLockedUpRewards;
+   // uint256 public totalLockedUpRewards;
 
     event Deposit(address indexed user, uint256 indexed pid, uint256 amount);
     event Withdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event EmergencyWithdraw(address indexed user, uint256 indexed pid, uint256 amount);
     event EmissionRateUpdated(address indexed caller, uint256 previousAmount, uint256 newAmount);
-    event RewardLockedUp(address indexed user, uint256 indexed pid, uint256 amountLockedUp);
+   // event RewardLockedUp(address indexed user, uint256 indexed pid, uint256 amountLockedUp);
     event UpdateUserBalance(address indexed user, string indexed msg, uint256 amount);
+    event PoolAdd(address indexed user, IERC20 lpToken, uint256 allocPoint, uint256 lastRewardBlock, uint16 depositFeeBP);
+    event PoolSet(address indexed user, IERC20 lpToken, uint256 allocPoint, uint256 lastRewardBlock, uint16 depositFeeBP);
+    event UpdateStartBlock(address indexed user, uint256 startBlock);
 
     constructor(
         $DRACHMA _$Drach,
@@ -833,9 +844,9 @@ contract MasterChef is Ownable, ReentrancyGuard {
 
     // Add a new lp to the pool. Can only be called by the owner.
     // XXX DO NOT add the same LP token more than once. Rewards will be messed up if you do.
-    function add(uint256 _allocPoint, IERC20 _lpToken, uint16 _depositFeeBP, uint256 _harvestInterval, bool _withUpdate) public onlyOwner {
+    function add(uint256 _allocPoint, IERC20 _lpToken, uint16 _depositFeeBP, /*uint256 _harvestInterval,*/ bool _withUpdate) public onlyOwner {
         require(_depositFeeBP <= 400, "add: invalid deposit fee basis points");
-        require(_harvestInterval <= MAXIMUM_HARVEST_INTERVAL, "add: invalid harvest interval");
+       // require(_harvestInterval <= MAXIMUM_HARVEST_INTERVAL, "add: invalid harvest interval");
         if (_withUpdate) {
             massUpdatePools();
         }
@@ -846,24 +857,30 @@ contract MasterChef is Ownable, ReentrancyGuard {
             allocPoint: _allocPoint,
             lastRewardBlock: lastRewardBlock,
             acc$DrachPerShare: 0,
-            depositFeeBP: _depositFeeBP
+            depositFeeBP: _depositFeeBP,
+            lpSupply:0
         }));
+        emit PoolAdd(msg.sender, _lpToken, _allocPoint,lastRewardBlock,_depositFeeBP);
     }
 
     // Update the given pool's $Drach allocation point and deposit fee. Can only be called by the owner.
-    function set(uint256 _pid, uint256 _allocPoint, uint16 _depositFeeBP, uint256 _harvestInterval, bool _withUpdate) public onlyOwner {
+    function set(uint256 _pid, uint256 _allocPoint, uint16 _depositFeeBP, /*uint256 _harvestInterval,*/  bool _withUpdate) public onlyOwner {
         require(_depositFeeBP <= 400, "set: invalid deposit fee basis points");
-        require(_harvestInterval <= MAXIMUM_HARVEST_INTERVAL, "set: invalid harvest interval");
+       // require(_harvestInterval <= MAXIMUM_HARVEST_INTERVAL, "set: invalid harvest interval");
         if (_withUpdate) {
             massUpdatePools();
         }
         totalAllocPoint = totalAllocPoint.sub(poolInfo[_pid].allocPoint).add(_allocPoint);
         poolInfo[_pid].allocPoint = _allocPoint;
         poolInfo[_pid].depositFeeBP = _depositFeeBP;
+        emit PoolSet(msg.sender, poolInfo[_pid].lpToken, _allocPoint,poolInfo[_pid].lastRewardBlock,_depositFeeBP);
     }
 
     // Return reward multiplier over the given _from to _to block.
-    function getMultiplier(uint256 _from, uint256 _to) public pure returns (uint256) {
+    function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256) {
+        if ($Drach.totalSupply () >= max_$Drach_supply) 
+         return 0;
+        
         return _to.sub(_from).mul(BONUS_MULTIPLIER);
     }
 
@@ -878,8 +895,8 @@ contract MasterChef is Ownable, ReentrancyGuard {
             uint256 $DrachReward = multiplier.mul($DrachPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
             acc$DrachPerShare = acc$DrachPerShare.add($DrachReward.mul(1e12).div(lpSupply));
         }
-        uint256 pending = user.amount.mul(acc$DrachPerShare).div(1e12).sub(user.rewardDebt);
-        return pending.add(user.rewardLockedUp);
+        return user.amount.mul(acc$DrachPerShare).div(1e18).sub(user.rewardDebt);
+       // return pending.add(user.rewardLockedUp);
     }
 
     // Update reward variables for all pools. Be careful of gas spending!
@@ -905,19 +922,24 @@ contract MasterChef is Ownable, ReentrancyGuard {
         uint256 $DrachReward = multiplier.mul($DrachPerBlock).mul(pool.allocPoint).div(totalAllocPoint);
         $Drach.mint(devAddress, $DrachReward.div(10));
         $Drach.mint(address(this), $DrachReward);
-        pool.acc$DrachPerShare = pool.acc$DrachPerShare.add($DrachReward.mul(1e12).div(lpSupply));
+        pool.acc$DrachPerShare = pool.acc$DrachPerShare.add($DrachReward.mul(1e18).div(lpSupply));
         pool.lastRewardBlock = block.number;
     }
 
     // Deposit LP tokens to MasterChef for $Drach allocation.
-    function deposit(uint256 _pid, uint256 _amount) public nonReentrant {
+    function deposit(uint256 _pid, uint256 _amount)  nonReentrant external{
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         updatePool(_pid);
+        //payPending$Drach(_pid);
         
-        payPending$Drach(_pid);
         if (_amount > 0) {
-            pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
+           
+         uint256 balanceBefore = pool.lpToken.balanceOf(address(this));
+         pool.lpToken.safeTransferFrom(address(msg.sender), address(this), _amount);
+	    _amount = pool.lpToken.balanceOf(address(this)).sub(balanceBefore);   
+           require(_amount > 0, "we dont accept deposits of 0");
+           
             if (address(pool.lpToken) == address($Drach)) {
                 uint256 transferTax = _amount.mul($Drach.totalFees()).div(100);
                 _amount = _amount.sub(transferTax);
@@ -936,12 +958,12 @@ contract MasterChef is Ownable, ReentrancyGuard {
     }
 
     // Withdraw LP tokens from MasterChef.
-    function withdraw(uint256 _pid, uint256 _amount) public nonReentrant {
+    function withdraw(uint256 _pid, uint256 _amount) nonReentrant external {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         require(user.amount >= _amount, "withdraw: not good");
         updatePool(_pid);
-        payPending$Drach(_pid);
+        //payPending$Drach(_pid);
         if (_amount > 0) {
             user.amount = user.amount.sub(_amount);
             pool.lpToken.safeTransfer(address(msg.sender), _amount);
@@ -952,13 +974,14 @@ contract MasterChef is Ownable, ReentrancyGuard {
     }
 
     // Withdraw without caring about rewards. EMERGENCY ONLY.
-    function emergencyWithdraw(uint256 _pid) public nonReentrant {
+    function emergencyWithdraw(uint256 _pid) nonReentrant external {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         uint256 amount = user.amount;
+        pool.lpSupply = pool.lpSupply.sub(user.amount);
         user.amount = 0;
         user.rewardDebt = 0;
-        user.rewardLockedUp = 0;
+        //user.rewardLockedUp = 0;
         pool.lpToken.safeTransfer(address(msg.sender), amount);
         emit EmergencyWithdraw(msg.sender, _pid, amount);
         updateUserBalance(msg.sender);
@@ -987,7 +1010,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         return balance;
     }
     
-    // Get user's lp amount in total lp amount
+    // Get user's lp amount from total lp amount
     function getUserLPAmount(address payable user) public view returns(uint256 userAmount, uint256 totalAmount){
         uint256 mul = 10**12;
         userAmount = 0;
@@ -1000,21 +1023,22 @@ contract MasterChef is Ownable, ReentrancyGuard {
         totalAmount = totalAllocPoint.mul(mul);
     }
 
-    // Pay or lockup pending $Drachs.
+    // Pay pending $Drachs. TO BE CHECKED
     function payPending$Drach(uint256 _pid) internal {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
 
-        uint256 pending = user.amount.mul(pool.acc$DrachPerShare).div(1e12).sub(user.rewardDebt);
-        if (pending > 0 || user.rewardLockedUp > 0) {
-            uint256 totalRewards = pending.add(user.rewardLockedUp);
+        uint256 pending = user.amount.mul(pool.acc$DrachPerShare).div(1e18).sub(user.rewardDebt);
+        if (pending > 0 /*|| user.rewardLockedUp > 0*/) {
+          //  uint256 totalRewards = pending.add(user.rewardLockedUp);
+            //uint256 totalRewards = pending;
 
             // reset lockup
-            totalLockedUpRewards = totalLockedUpRewards.sub(user.rewardLockedUp);
-            user.rewardLockedUp = 0;
+       // totalLockedUpRewards = totalLockedUpRewards.sub(user.rewardLockedUp);
+      //  user.rewardLockedUp = 0;
 
             // send rewards
-            safe$DrachTransfer(msg.sender, totalRewards);
+            safe$DrachTransfer(msg.sender, pending);
         }
     }
 
@@ -1028,7 +1052,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
         }
     }
 
-    // Update dev address by the previous dev.
+    // Update dev address
     function setDevAddress(address _devAddress) public {
         require(msg.sender == devAddress, "setDevAddress: FORBIDDEN");
         require(_devAddress != address(0), "setDevAddress: ZERO");
@@ -1041,15 +1065,27 @@ contract MasterChef is Ownable, ReentrancyGuard {
         feeAddress = _feeAddress;
     }
 
-    // Pancake has to add hidden dummy pools in order to alter the emission, here we make it simple and transparent to all.
+    
     function updateEmissionRate(uint256 _$DrachPerBlock) public onlyOwner {
+        require(_$DrachPerBlock <= MAXIMUM_EMISSION_RATE, "Too High");
         massUpdatePools();
         emit EmissionRateUpdated(msg.sender, $DrachPerBlock, _$DrachPerBlock);
-        $DrachPerBlock = _$DrachPerBlock;
+        $DrachPerBlock = $DrachPerBlock;
     }
     
     function set$DrachPerBlock(uint256 _$DrachPerBlock) public onlyOwner {
         $DrachPerBlock = _$DrachPerBlock;
     }
 
+// Only update before start of farm
+    function updateStartBlock(uint256 _startBlock) onlyOwner external{
+	require(startBlock > block.number, "Farm already started");
+	uint256 length = poolInfo.length;
+	for(uint256 pid = 0; pid < length; ++pid){
+		PoolInfo storage pool = poolInfo[pid];
+		pool.lastRewardBlock = _startBlock;
+	}
+        startBlock = _startBlock;
+	emit UpdateStartBlock(msg.sender, _startBlock);
+    }
 }
