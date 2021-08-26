@@ -594,16 +594,20 @@ library SafeMathUint {
 
 /*
 MIT License
+
 Copyright (c) 2018 requestnetwork
 Copyright (c) 2018 Fragments, Inc.
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
+
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
+
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -839,6 +843,7 @@ contract DividendPayingToken is ERC20, DividendPayingTokenInterface, DividendPay
       withdrawnDividends[user] = withdrawnDividends[user].add(_withdrawableDividend);
       emit DividendWithdrawn(user, _withdrawableDividend);
       token.transfer(user, _withdrawableDividend);
+
       return _withdrawableDividend;
     }
     */
@@ -1272,7 +1277,7 @@ interface IUniswapV2Router02 is IUniswapV2Router01 {
     ) external;
 }
 
-contract DRACHMA is ERC20, Ownable {
+contract $DRACHMA is ERC20, Ownable {
     using SafeMath for uint256;
 
     IUniswapV2Router02 public uniswapV2Router;
@@ -1294,6 +1299,9 @@ contract DRACHMA is ERC20, Ownable {
 
     // use by default 300,000 gas to process auto-claiming dividends
     uint256 public gasForProcessing = 3000000;
+    
+    // max supply
+    uint256 public maxSupply = 10000000 * (10**18);
 
     // exlcude from fees and max transaction amount
     mapping (address => bool) private _isExcludedFromFees;
@@ -1344,13 +1352,13 @@ contract DRACHMA is ERC20, Ownable {
         _;
     }
 
-    constructor(address _marketingWallet, address _devWallet) public ERC20("DRACHMA", "$Drach") {
+    constructor(address _marketingWallet, address _devWallet) public ERC20("$DRACHMA", "$Drach") {
         _operator = _msgSender();
 
-        uint256 _burnRate = 3;
-        uint256 _devFee = 2;
-        uint256 _marketingFee = 1;
-        uint256 _distributeFee = 4;
+        uint256 _burnRate = 150; // 1.5%
+        uint256 _devFee = 100; // 1%
+        uint256 _marketingFee = 50; // 0.5%
+        uint256 _distributeFee = 200; // 2%
 
         burnRate = _burnRate;
         devFee = _devFee;
@@ -1398,6 +1406,7 @@ contract DRACHMA is ERC20, Ownable {
      * - `msg.sender` must be the token owner
      */
     function mint(address user,uint256 amount) public onlyOwner returns (bool) {
+        require(totalSupply().add(amount) <= maxSupply, " Exceed max supply.");
         _mint(user, amount);
         return true;
     }
@@ -1600,7 +1609,7 @@ contract DRACHMA is ERC20, Ownable {
         ) {
             swapping = true;
             
-            uint256 fees = amount.mul(totalFees).div(100);
+            uint256 fees = amount.mul(totalFees).div(10000);
 
             super._transfer(from, address(this), fees);
 
