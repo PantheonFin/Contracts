@@ -781,9 +781,9 @@ contract MasterChef is Ownable, ReentrancyGuard {
     // Info of each pool.
     struct PoolInfo {
         IERC20 lpToken;           // Address of LP token contract.
-        uint256 allocPoint;       // How many allocation points assigned to this pool. EGGs to distribute per block.
-        uint256 lastRewardBlock;  // Last block number that EGGs distribution occurs.
-        uint256 accDrachPerShare;   // Accumulated EGGs per share, times 1e12. See below.
+        uint256 allocPoint;       // How many allocation points assigned to this pool. Drachma to distribute per block.
+        uint256 lastRewardBlock;  // Last block number that Drachma distribution occurs.
+        uint256 accDrachPerShare;   // Accumulated Drachma per share, times 1e12. See below.
         uint16 depositFeeBP;      // Deposit fee in basis points
         uint256 lpSupply; 
     }
@@ -799,7 +799,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     // Bonus muliplier for early Drach makers.
     uint256 public constant BONUS_MULTIPLIER = 1;
     //Max suplly of DrachMA
-     uint256 constant max_Drach_supply = 1000000 ether;
+     uint256 constant max_Drach_supply = 10000000 ether;
      // Maximum emission rate of Drachma
      uint256 public constant MAXIMUM_EMISSION_RATE = 5 ether;
 
@@ -848,7 +848,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     // XXX DO NOT add the same LP token more than once. Rewards will be messed up if you do.
     function add(uint256 _allocPoint, IERC20 _lpToken, uint16 _depositFeeBP, bool _withUpdate) public onlyOwner {
         _lpToken.balanceOf(address(this));
-        require(_depositFeeBP <= 200, "add: invalid deposit fee basis points");
+        require(_depositFeeBP <= 400, "add: invalid deposit fee basis points");
         if (_withUpdate) {
             massUpdatePools();
         }
@@ -867,7 +867,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
 
     // Update the given pool's Drach allocation point and deposit fee. Can only be called by the owner.
     function set(uint256 _pid, uint256 _allocPoint, uint16 _depositFeeBP, bool _withUpdate) public onlyOwner {
-        require(_depositFeeBP <= 200, "set: invalid deposit fee basis points");
+        require(_depositFeeBP <= 400, "set: invalid deposit fee basis points");
         if (_withUpdate) {
             massUpdatePools();
         }
