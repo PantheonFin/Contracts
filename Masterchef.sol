@@ -1,3 +1,7 @@
+/**
+ *Submitted for verification at polygonscan.com on 2021-09-28
+*/
+
 // SPDX-License-Identifier: MIT
 
 pragma solidity >=0.6.0 <0.8.0;
@@ -745,8 +749,6 @@ interface DRACHMA {
     function balanceOf(address account) external view returns (uint256);
     
     function mint(address user, uint256 amount) external;
-
-    function setBalance(address user, uint256 amount) external;
     
     function updateMarketingWallet(address _marketingWallet) external;
 
@@ -758,7 +760,6 @@ interface DRACHMA {
 
     function updateMarketingFee(uint256 _marketingFee) external;
 
-    function updateDistributeFee(uint256 _distributeFee) external;
 }
 
 // MasterChef is the master of Drach. He can make Drach and he is a fair guy.
@@ -799,7 +800,7 @@ contract MasterChef is Ownable, ReentrancyGuard {
     // Bonus muliplier for early Drach makers.
     uint256 public constant BONUS_MULTIPLIER = 1;
     //Max suplly of DrachMA
-     uint256 constant max_Drach_supply = 10000000 ether;
+     uint256 constant max_Drach_supply = 6000000 * (10**18);
      // Maximum emission rate of Drachma
      uint256 public constant MAXIMUM_EMISSION_RATE = 5 ether;
 
@@ -845,7 +846,6 @@ contract MasterChef is Ownable, ReentrancyGuard {
     }
 
     // Add a new lp to the pool. Can only be called by the owner.
-    // XXX DO NOT add the same LP token more than once. Rewards will be messed up if you do.
     function add(uint256 _allocPoint, IERC20 _lpToken, uint16 _depositFeeBP, bool _withUpdate) public onlyOwner {
         _lpToken.balanceOf(address(this));
         require(_depositFeeBP <= 400, "add: invalid deposit fee basis points");
@@ -966,7 +966,6 @@ contract MasterChef is Ownable, ReentrancyGuard {
             } else {
                 user.amount = user.amount.add(_amount);
             }
-            updateUserBalance(msg.sender);
         }
         user.rewardDebt = user.amount.mul(pool.accDrachPerShare).div(1e12);
         emit Deposit(msg.sender, _pid, _amount);
@@ -982,7 +981,6 @@ contract MasterChef is Ownable, ReentrancyGuard {
         if (_amount > 0) {
             user.amount = user.amount.sub(_amount);
             pool.lpToken.safeTransfer(address(msg.sender), _amount);
-            updateUserBalance(msg.sender);
         }
         user.rewardDebt = user.amount.mul(pool.accDrachPerShare).div(1e12);
         emit Withdraw(msg.sender, _pid, _amount);
@@ -993,50 +991,18 @@ contract MasterChef is Ownable, ReentrancyGuard {
         PoolInfo storage pool = poolInfo[_pid];
         UserInfo storage user = userInfo[_pid][msg.sender];
         uint256 amount = user.amount;
-        pool.lpSupply = pool.lpSupply.sub(user.amount);
+
         user.amount = 0;
         user.rewardDebt = 0;
         pool.lpToken.safeTransfer(address(msg.sender), amount);
+        // In the case of an accounting error, we choose to let the user emergency withdraw anyway
+        if (pool.lpSupply >=  amount)
+            pool.lpSupply = pool.lpSupply - amount;
+        else
+            pool.lpSupply = 0;
+            
         emit EmergencyWithdraw(msg.sender, _pid, amount);
-        updateUserBalance(msg.sender);
     }
-
-    // Update balance for reward division
-    function updateUserBalance(address user) internal
-    {
-        uint256 balance = 0;
-        for(uint8 i = 0; i < poolInfo.length; i++)
-        {
-            balance = balance.add(userInfo[i][user].amount);
-        }
-        emit UpdateUserBalance(user,"balance update", balance);
-        Drach.setBalance(user, balance);
-    }
-
-    // Get balance for reward division
-    function getUserBalance(address user) public view returns(uint256)
-    {
-        uint256 balance = 0;
-        for(uint8 i = 0; i < poolInfo.length; i++)
-        {
-            balance = balance.add(userInfo[i][user].amount);
-        }
-        return balance;
-    }
-    
-    // Get user's lp amount in total lp amount
-    function getUserLPAmount(address payable user) public view returns(uint256 userAmount, uint256 totalAmount){
-        uint256 mul = 10**12;
-        userAmount = 0;
-        for(uint8 i = 0; i < poolInfo.length; i++)
-        {
-            uint256 lpAmount = poolInfo[i].lpToken.balanceOf(address(this));
-            if(lpAmount > 0)
-                userAmount = userAmount.add(userInfo[i][user].amount.mul(mul).mul(poolInfo[i].allocPoint).div(lpAmount));
-        }
-        totalAmount = totalAllocPoint.mul(mul);
-    }
-
 
     // Safe Drach transfer function, just in case if rounding error causes pool to not have enough Drachs.
     function safeDrachTransfer(address _to, uint256 _amount) internal {
@@ -1090,9 +1056,5 @@ contract MasterChef is Ownable, ReentrancyGuard {
 
     function updateTokenMarketingFee(uint256 _marketingFee) public onlyOwner {
         Drach.updateMarketingFee(_marketingFee);
-    }
-
-    function updateTokenDistributeFee(uint256 _distributeFee) public onlyOwner {
-        Drach.updateDistributeFee(_distributeFee);
     }
 }
