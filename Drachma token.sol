@@ -1,3 +1,7 @@
+/**
+ *Submitted for verification at polygonscan.com on 2021-09-28
+*/
+
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.6.2;
 
@@ -683,331 +687,6 @@ library SafeMathInt {
     }
 }
 
-
-pragma solidity ^0.6.2;
-
-
-/// @title Dividend-Paying Token Interface
-/// @author Roger Wu (https://github.com/roger-wu)
-/// @dev An interface for a dividend-paying token contract.
-interface DividendPayingTokenInterface {
-  /// @notice View the amount of dividend in wei that an address can withdraw.
-  /// @param _owner The address of a token holder.
-  /// @return The amount of dividend in wei that `_owner` can withdraw.
-  function dividendOf(address _owner) external view returns(uint256);
-
-  /// @notice Distributes ether to token holders as dividends.
-  /// @dev SHOULD distribute the paid ether to token holders as dividends.
-  ///  SHOULD NOT directly transfer ether to token holders in this function.
-  ///  MUST emit a `DividendsDistributed` event when the amount of distributed ether is greater than 0.
-  function distributeDividends(uint256 amount) external;
-
-  /// @notice Withdraws the ether distributed to the sender.
-  /// @dev SHOULD transfer `dividendOf(msg.sender)` wei to `msg.sender`, and `dividendOf(msg.sender)` SHOULD be 0 after the transfer.
-  ///  MUST emit a `DividendWithdrawn` event if the amount of ether transferred is greater than 0.
-  function withdrawDividend() external;
-
-  /// @dev This event MUST emit when ether is distributed to token holders.
-  /// @param from The address which sends ether to this contract.
-  /// @param weiAmount The amount of distributed ether in wei.
-  event DividendsDistributed(
-    address indexed from,
-    uint256 weiAmount
-  );
-
-  /// @dev This event MUST emit when an address withdraws their dividend.
-  /// @param to The address which withdraws ether from this contract.
-  /// @param weiAmount The amount of withdrawn ether in wei.
-  event DividendWithdrawn(
-    address indexed to,
-    uint256 weiAmount
-  );
-}
-
-
-pragma solidity ^0.6.2;
-
-
-/// @title Dividend-Paying Token Optional Interface
-/// @author Roger Wu (https://github.com/roger-wu)
-/// @dev OPTIONAL functions for a dividend-paying token contract.
-interface DividendPayingTokenOptionalInterface {
-  /// @notice View the amount of dividend in wei that an address can withdraw.
-  /// @param _owner The address of a token holder.
-  /// @return The amount of dividend in wei that `_owner` can withdraw.
-  function withdrawableDividendOf(address _owner) external view returns(uint256);
-
-  /// @notice View the amount of dividend in wei that an address has withdrawn.
-  /// @param _owner The address of a token holder.
-  /// @return The amount of dividend in wei that `_owner` has withdrawn.
-  function withdrawnDividendOf(address _owner) external view returns(uint256);
-
-  /// @notice View the amount of dividend in wei that an address has earned in total.
-  /// @dev accumulativeDividendOf(_owner) = withdrawableDividendOf(_owner) + withdrawnDividendOf(_owner)
-  /// @param _owner The address of a token holder.
-  /// @return The amount of dividend in wei that `_owner` has earned in total.
-  function accumulativeDividendOf(address _owner) external view returns(uint256);
-}
-
-
-interface MasterChef{
-    function getUserLPAmount(address payable user) external view returns(uint256, uint256);
-}
-
-
-/// @title Dividend-Paying Token
-/// @dev A mintable ERC20 token that allows anyone to pay and distribute token
-///  to token holders as dividends and allows token holders to withdraw their dividends.
-contract DividendPayingToken is ERC20, DividendPayingTokenInterface, DividendPayingTokenOptionalInterface {
-  using SafeMath for uint256;
-  using SafeMathUint for uint256;
-  using SafeMathInt for int256;
-
-  // With `magnitude`, we can properly distribute dividends even if the amount of received ether is small.
-  // For more discussion about choosing the value of `magnitude`,
-  //  see https://github.com/ethereum/EIPs/issues/1726#issuecomment-472352728
-  uint256 constant internal magnitude = 2**128;
-
-  uint256 internal magnifiedDividendPerShare;
-
-  //token for distribution
-  IERC20 public token;
-  //token for distribution
-  MasterChef public master;
-  //token amount
-  uint256 public tokenAmount;
-
-  // About dividendCorrection:
-  // If the token balance of a `_user` is never changed, the dividend of `_user` can be computed with:
-  //   `dividendOf(_user) = dividendPerShare * balanceOf(_user)`.
-  // When `balanceOf(_user)` is changed (via minting/burning/transferring tokens),
-  //   `dividendOf(_user)` should not be changed,
-  //   but the computed value of `dividendPerShare * balanceOf(_user)` is changed.
-  // To keep the `dividendOf(_user)` unchanged, we add a correction term:
-  //   `dividendOf(_user) = dividendPerShare * balanceOf(_user) + dividendCorrectionOf(_user)`,
-  //   where `dividendCorrectionOf(_user)` is updated whenever `balanceOf(_user)` is changed:
-  //   `dividendCorrectionOf(_user) = dividendPerShare * (old balanceOf(_user)) - (new balanceOf(_user))`.
-  // So now `dividendOf(_user)` returns the same value before and after `balanceOf(_user)` is changed.
-  mapping(address => int256) internal magnifiedDividendCorrections;
-  mapping(address => uint256) internal withdrawnDividends;
-
-  uint256 public totalDividendsDistributed;
-
-  constructor(string memory _name, string memory _symbol) public ERC20(_name, _symbol) {
-
-  }
-
-  /// @dev Distributes dividends whenever ether is paid to this contract.
-  receive() external payable {
-    //distributeDividends();
-  }
-
-  /// @notice Distributes ether to token holders as dividends.
-  /// @dev It reverts if the total supply of tokens is 0.
-  /// It emits the `DividendsDistributed` event if the amount of received ether is greater than 0.
-  /// About undistributed ether:
-  ///   In each distribution, there is a small amount of ether not distributed,
-  ///     the magnified amount of which is
-  ///     `(msg.value * magnitude) % totalSupply()`.
-  ///   With a well-chosen `magnitude`, the amount of undistributed ether
-  ///     (de-magnified) in a distribution can be less than 1 wei.
-  ///   We can actually keep track of the undistributed ether in a distribution
-  ///     and try to distribute it in the next distribution,
-  ///     but keeping track of such data on-chain costs much more than
-  ///     the saved ether, so we don't do that.
-  function distributeDividends(uint256 amount) public override {
-    require(totalSupply() > 0);
-
-    if (amount > 0) {
-      magnifiedDividendPerShare = magnifiedDividendPerShare.add(
-        (amount).mul(magnitude) / totalSupply()
-      );
-      emit DividendsDistributed(msg.sender, amount);
-
-      totalDividendsDistributed = totalDividendsDistributed.add(amount);
-    }
-  }
-
-  /// @notice Withdraws the ether distributed to the sender.
-  /// @dev It emits a `DividendWithdrawn` event if the amount of withdrawn ether is greater than 0.
-  function withdrawDividend() public virtual override {
-    _withdrawDividendOfUser(msg.sender);
-  }
-
-  /// @notice Withdraws the ether distributed to the sender.
-  /// @dev It emits a `DividendWithdrawn` event if the amount of withdrawn ether is greater than 0.
-  function _withdrawDividendOfUser(address payable user) internal returns (uint256) {
-    /*
-    uint256 _withdrawableDividend = withdrawableDividendOf(user);
-    if (_withdrawableDividend > 0) {
-      withdrawnDividends[user] = withdrawnDividends[user].add(_withdrawableDividend);
-      emit DividendWithdrawn(user, _withdrawableDividend);
-      token.transfer(user, _withdrawableDividend);
-
-      return _withdrawableDividend;
-    }
-    */
-    (uint256 userAmount, uint256 totalAmount) = master.getUserLPAmount(user);
-    if(userAmount > 0 && tokenAmount > 0)
-    {
-        uint256 userTokenAmount = tokenAmount.mul(userAmount).div(totalAmount);
-        withdrawnDividends[user] = withdrawnDividends[user].add(userTokenAmount);
-        emit DividendWithdrawn(user, userTokenAmount);
-        token.transfer(user, userTokenAmount);
-        return userTokenAmount;
-    }
-
-    return 0;
-  }
-  
-  function startProcess() public {
-      tokenAmount = token.balanceOf(address(this));
-  }
-
-
-  /// @notice View the amount of dividend in wei that an address can withdraw.
-  /// @param _owner The address of a token holder.
-  /// @return The amount of dividend in wei that `_owner` can withdraw.
-  function dividendOf(address _owner) public view override returns(uint256) {
-    return withdrawableDividendOf(_owner);
-  }
-
-  /// @notice View the amount of dividend in wei that an address can withdraw.
-  /// @param _owner The address of a token holder.
-  /// @return The amount of dividend in wei that `_owner` can withdraw.
-  function withdrawableDividendOf(address _owner) public view override returns(uint256) {
-    return accumulativeDividendOf(_owner).sub(withdrawnDividends[_owner]);
-  }
-
-  /// @notice View the amount of dividend in wei that an address has withdrawn.
-  /// @param _owner The address of a token holder.
-  /// @return The amount of dividend in wei that `_owner` has withdrawn.
-  function withdrawnDividendOf(address _owner) public view override returns(uint256) {
-    return withdrawnDividends[_owner];
-  }
-
-
-  /// @notice View the amount of dividend in wei that an address has earned in total.
-  /// @dev accumulativeDividendOf(_owner) = withdrawableDividendOf(_owner) + withdrawnDividendOf(_owner)
-  /// = (magnifiedDividendPerShare * balanceOf(_owner) + magnifiedDividendCorrections[_owner]) / magnitude
-  /// @param _owner The address of a token holder.
-  /// @return The amount of dividend in wei that `_owner` has earned in total.
-  function accumulativeDividendOf(address _owner) public view override returns(uint256) {
-    return magnifiedDividendPerShare.mul(balanceOf(_owner)).toInt256Safe()
-      .add(magnifiedDividendCorrections[_owner]).toUint256Safe() / magnitude;
-  }
-
-  /// @dev Internal function that transfer tokens from one address to another.
-  /// Update magnifiedDividendCorrections to keep dividends unchanged.
-  /// @param from The address to transfer from.
-  /// @param to The address to transfer to.
-  /// @param value The amount to be transferred.
-  function _transfer(address from, address to, uint256 value) internal virtual override {
-    require(false);
-
-    int256 _magCorrection = magnifiedDividendPerShare.mul(value).toInt256Safe();
-    magnifiedDividendCorrections[from] = magnifiedDividendCorrections[from].add(_magCorrection);
-    magnifiedDividendCorrections[to] = magnifiedDividendCorrections[to].sub(_magCorrection);
-  }
-
-  /// @dev Internal function that mints tokens to an account.
-  /// Update magnifiedDividendCorrections to keep dividends unchanged.
-  /// @param account The account that will receive the created tokens.
-  /// @param value The amount that will be created.
-  function _mint(address account, uint256 value) internal override {
-    super._mint(account, value);
-
-    magnifiedDividendCorrections[account] = magnifiedDividendCorrections[account]
-      .sub( (magnifiedDividendPerShare.mul(value)).toInt256Safe() );
-  }
-
-  /// @dev Internal function that burns an amount of the token of a given account.
-  /// Update magnifiedDividendCorrections to keep dividends unchanged.
-  /// @param account The account whose tokens will be burnt.
-  /// @param value The amount that will be burnt.
-  function _burn(address account, uint256 value) internal override {
-    super._burn(account, value);
-
-    magnifiedDividendCorrections[account] = magnifiedDividendCorrections[account]
-      .add( (magnifiedDividendPerShare.mul(value)).toInt256Safe() );
-  }
-
-  function _setBalance(address account, uint256 newBalance) internal {
-    uint256 currentBalance = balanceOf(account);
-
-    if(newBalance > currentBalance) {
-      uint256 mintAmount = newBalance.sub(currentBalance);
-      _mint(account, mintAmount);
-    } else if(newBalance < currentBalance) {
-      uint256 burnAmount = currentBalance.sub(newBalance);
-      _burn(account, burnAmount);
-    }
-  }
-}
-
-
-pragma solidity ^0.6.2;
-
-library IterableMapping {
-    // Iterable mapping from address to uint;
-    struct Map {
-        address[] keys;
-        mapping(address => uint) values;
-        mapping(address => uint) indexOf;
-        mapping(address => bool) inserted;
-    }
-
-    function get(Map storage map, address key) public view returns (uint) {
-        return map.values[key];
-    }
-
-    function getIndexOfKey(Map storage map, address key) public view returns (int) {
-        if(!map.inserted[key]) {
-            return -1;
-        }
-        return int(map.indexOf[key]);
-    }
-
-    function getKeyAtIndex(Map storage map, uint index) public view returns (address) {
-        return map.keys[index];
-    }
-
-
-
-    function size(Map storage map) public view returns (uint) {
-        return map.keys.length;
-    }
-
-    function set(Map storage map, address key, uint val) public {
-        if (map.inserted[key]) {
-            map.values[key] = val;
-        } else {
-            map.inserted[key] = true;
-            map.values[key] = val;
-            map.indexOf[key] = map.keys.length;
-            map.keys.push(key);
-        }
-    }
-
-    function remove(Map storage map, address key) public {
-        if (!map.inserted[key]) {
-            return;
-        }
-
-        delete map.inserted[key];
-        delete map.values[key];
-
-        uint index = map.indexOf[key];
-        uint lastIndex = map.keys.length - 1;
-        address lastKey = map.keys[lastIndex];
-
-        map.indexOf[lastKey] = index;
-        delete map.indexOf[key];
-
-        map.keys[index] = lastKey;
-        map.keys.pop();
-    }
-}
 pragma solidity ^0.6.2;
 
 contract Ownable is Context {
@@ -1070,44 +749,29 @@ contract DRACHMA is ERC20, Ownable {
 
     bool private swapping;
 
-    DRACHMADividendTracker public dividendTracker;
-
     uint256 public maxSellTransactionAmount = 500000 * (10**18);
 
     uint256 public burnRate;
     uint256 public devFee;
     uint256 public marketingFee;
-    uint256 public distributeFee;
     uint256 public totalFees;
 
     // use by default 300,000 gas to process auto-claiming dividends
     uint256 public gasForProcessing = 3000000;
     
     // max supply
-    uint256 public maxSupply = 10000000 * (10**18);
+    uint256 public maxSupply = 6000000 * (10**18);
 
     // exlcude from fees and max transaction amount
     mapping (address => bool) private _isExcludedFromFees;
 
-    event UpdateDividendTracker(address indexed newAddress, address indexed oldAddress);
-
-    event UpdateUniswapV2Router(address indexed newAddress, address indexed oldAddress);
-
     event ExcludeFromFees(address indexed account, bool isExcluded);
     event ExcludeMultipleAccountsFromFees(address[] accounts, bool isExcluded);
-
-    event FixedSaleEarlyParticipantsAdded(address[] participants);
-
-    event SetAutomatedMarketMakerPair(address indexed pair, bool indexed value);
 
     event devWalletUpdated(address indexed newWallet, address indexed oldWallet);
     event marketingWalletUpdated(address indexed newWallet, address indexed oldWallet);
 
     event GasForProcessingUpdated(uint256 indexed newValue, uint256 indexed oldValue);
-
-    event SendDividends(
-        uint256 amount
-    );
 
     event SendMarketingFee(
         uint256 tokensSwapped,
@@ -1119,15 +783,6 @@ contract DRACHMA is ERC20, Ownable {
         address devWallet
     );
 
-    event ProcessedDividendTracker(
-        uint256 iterations,
-        uint256 claims,
-        uint256 lastProcessedIndex,
-        bool indexed automatic,
-        uint256 gas,
-        address indexed processor
-    );
-
     
     address private _operator;
     modifier onlyOperator() {
@@ -1135,45 +790,30 @@ contract DRACHMA is ERC20, Ownable {
         _;
     }
 
-    constructor(address _marketingWallet, address _devWallet) public ERC20("DRACH", "Drachm") {
+    constructor(address _marketingWallet, address _devWallet) public ERC20("DRACHMAS", "Drachs") {
         _operator = _msgSender();
 
-        uint256 _burnRate = 150; // 1.5%
-        uint256 _devFee = 100; // 1%
+        uint256 _burnRate = 250; // 2.5%
+        uint256 _devFee = 200; // 2%
         uint256 _marketingFee = 50; // 0.5%
-        uint256 _distributeFee = 200; // 2%
 
         burnRate = _burnRate;
         devFee = _devFee;
         marketingFee = _marketingFee;
-        distributeFee = _distributeFee;
-        totalFees = _burnRate.add(_devFee).add(_marketingFee).add(_distributeFee);
-
-        dividendTracker = new DRACHMADividendTracker();
-        dividendTracker.setToken(IERC20(address(this)));
+        totalFees = _burnRate.add(_devFee).add(_marketingFee);
         
         marketingWallet = _marketingWallet;
         devWallet = _devWallet;
 
-        // exclude from receiving dividends
-        dividendTracker.excludeFromDividends(address(dividendTracker));
-        dividendTracker.excludeFromDividends(address(this));
-        dividendTracker.excludeFromDividends(owner());
-        if(owner() != _marketingWallet)
-            dividendTracker.excludeFromDividends(_marketingWallet);
-        if(owner() != _devWallet && _devWallet != _marketingWallet)
-            dividendTracker.excludeFromDividends(_devWallet);
-
         // exclude from paying fees or having max transaction amount
         excludeFromFees(address(this), true);
-        excludeFromFees(address(dividendTracker), true);
         excludeFromFees(owner(), true);
         if(owner() != _marketingWallet)
             excludeFromFees(_marketingWallet, true);
         if(owner() != _devWallet && _devWallet != _marketingWallet)
             excludeFromFees(_devWallet, true);
 
-        mint(owner(), 5000000 * (10**18));
+        mint(owner(), 2000000 * (10**18));
     }
 
     receive() external payable {
@@ -1210,26 +850,6 @@ contract DRACHMA is ERC20, Ownable {
         _operator = newOperator;
     }
 
-    function updateDividendTracker(address newAddress) public onlyOwner {
-        require(newAddress != address(dividendTracker), "DRACHMA: The dividend tracker already has that address");
-
-        DRACHMADividendTracker newDividendTracker = DRACHMADividendTracker(payable(newAddress));
-        newDividendTracker.setToken(IERC20(address(this)));
-
-        excludeFromFees(address(dividendTracker), false);
-        excludeFromFees(newAddress, true);
-
-        require(newDividendTracker.owner() == address(this), "DRACHMA: The new dividend tracker must be owned by the DRACHMA token contract");
-
-        newDividendTracker.excludeFromDividends(address(newDividendTracker));
-        newDividendTracker.excludeFromDividends(address(this));
-        newDividendTracker.excludeFromDividends(owner());
-
-        emit UpdateDividendTracker(newAddress, address(dividendTracker));
-
-        dividendTracker = newDividendTracker;
-    }
-
     function excludeFromFees(address account, bool excluded) public onlyOperator {
         require(_isExcludedFromFees[account] != excluded, "DRACHMA: Account is already the value of 'excluded'");
         _isExcludedFromFees[account] = excluded;
@@ -1252,107 +872,27 @@ contract DRACHMA is ERC20, Ownable {
         gasForProcessing = newValue;
     }
 
-    function updateClaimWait(uint256 claimWait) external onlyOwner {
-        dividendTracker.updateClaimWait(claimWait);
-    }
-
-    function updateMarketingWallet(address _marketingWallet) public onlyOwner {
-        emit marketingWalletUpdated(_marketingWallet, marketingWallet);
-        marketingWallet = _marketingWallet;
-        dividendTracker.excludeFromDividends(_marketingWallet);
-    }
-
-    function updateDevWallet(address _devWallet) public onlyOwner {
-        emit devWalletUpdated(_devWallet, devWallet);
-        devWallet = _devWallet;
-        dividendTracker.excludeFromDividends(_devWallet);
-    }
-
     function updateBurnRate(uint256 _burnRate) public onlyOwner {
         burnRate = _burnRate;
-        totalFees = burnRate.add(devFee).add(marketingFee).add(distributeFee);
+        totalFees = burnRate.add(devFee).add(marketingFee);
         require(totalFees <= 500, "No more than 5%. Ajust the other rates");
     }
 
     function updateDevFee(uint256 _devFee) public onlyOwner {
         devFee = _devFee;
-        totalFees = burnRate.add(devFee).add(marketingFee).add(distributeFee);
+        totalFees = burnRate.add(devFee).add(marketingFee);
         require(totalFees <= 500, "No more than 5%. Ajust the other rates");
     }
 
     function updateMarketingFee(uint256 _marketingFee) public onlyOwner {
         marketingFee = _marketingFee;
-        totalFees = burnRate.add(devFee).add(marketingFee).add(distributeFee);
+        totalFees = burnRate.add(devFee).add(marketingFee);
         require(totalFees <= 500, "No more than 5%. Ajust the other rates");
     }
 
-    function updateDistributeFee(uint256 _distributeFee) public onlyOwner {
-        distributeFee = _distributeFee;
-        totalFees = burnRate.add(devFee).add(marketingFee).add(distributeFee);
-        require(totalFees <= 500, "No more than 5%. Ajust the other rates");
-    }
-
-    function getClaimWait() external view returns(uint256) {
-        return dividendTracker.claimWait();
-    }
-
-    function getTotalDividendsDistributed() external view returns (uint256) {
-        return dividendTracker.totalDividendsDistributed();
-    }
 
     function isExcludedFromFees(address account) public view returns(bool) {
         return _isExcludedFromFees[account];
-    }
-
-    function withdrawableDividendOf(address account) public view returns(uint256) {
-        return dividendTracker.withdrawableDividendOf(account);
-    }
-
-    function dividendTokenBalanceOf(address account) public view returns (uint256) {
-        return dividendTracker.balanceOf(account);
-    }
-
-    function getAccountDividendsInfo(address account)
-        external view returns (
-            address,
-            int256,
-            int256,
-            uint256,
-            uint256,
-            uint256,
-            uint256,
-            uint256) {
-        return dividendTracker.getAccount(account);
-    }
-
-    function getAccountDividendsInfoAtIndex(uint256 index)
-        external view returns (
-            address,
-            int256,
-            int256,
-            uint256,
-            uint256,
-            uint256,
-            uint256,
-            uint256) {
-        return dividendTracker.getAccountAtIndex(index);
-    }
-
-    function processDividendTracker(uint256 gas) external {
-        (uint256 iterations, uint256 claims, uint256 lastProcessedIndex) = dividendTracker.process(gas);
-        emit ProcessedDividendTracker(iterations, claims, lastProcessedIndex, false, gas, tx.origin);
-    }
-
-    function claim() external {
-        dividendTracker.processAccount(msg.sender, false);
-    }
-
-    function getLastProcessedIndex() external view returns(uint256) {
-        return dividendTracker.getLastProcessedIndex();
-    }
-
-    function getNumberOfDividendTokenHolders() external view returns(uint256) {
-        return dividendTracker.getNumberOfTokenHolders();
     }
 
     function _transfer(
@@ -1378,7 +918,7 @@ contract DRACHMA is ERC20, Ownable {
         bool takeFee = true;
 
         // if any account belongs to _isExcludedFromFee account then remove the fee
-        if(_isExcludedFromFees[from] || _isExcludedFromFees[to] || from == address(dividendTracker) || to == address(dividendTracker)) {
+        if(_isExcludedFromFees[from] || _isExcludedFromFees[to]) {
             takeFee = false;
         }
 
@@ -1394,14 +934,11 @@ contract DRACHMA is ERC20, Ownable {
             uint256 burnTokens = fees.mul(burnRate).div(totalFees);
             super._burn(address(this), burnTokens);
 
-            uint256 devFeeTokens = fees.mul(devFee).div(totalFees);
-            sendDevFee(devFeeTokens);
-
             uint256 marketingFeeTokens = fees.mul(marketingFee).div(totalFees);
             sendMarketingFee(marketingFeeTokens);
             
-            uint256 distributeToken = balanceOf(address(this));
-            sendDividends(distributeToken);
+            uint256 devFeeTokens = balanceOf(address(this));
+            sendDevFee(devFeeTokens);
 
             amount = amount.sub(fees);
 
@@ -1409,30 +946,6 @@ contract DRACHMA is ERC20, Ownable {
         }
 
         super._transfer(from, to, amount);
-
-        /*
-        try dividendTracker.setBalance(payable(from), balanceOf(from)) {} catch {}
-        try dividendTracker.setBalance(payable(to), balanceOf(to)) {} catch {}
-        */
-
-        if(!swapping && takeFee) {
-            uint256 gas = gasForProcessing;
-            
-            MasterChef master = dividendTracker.getMaster();
-            if(address(master) != address(0))
-            {
-                dividendTracker.startProcess();
-    
-                (uint256 iterations, uint256 claims, uint256 lastProcessedIndex) = dividendTracker.process(gas);
-                emit ProcessedDividendTracker(iterations, claims, lastProcessedIndex, false, gas, tx.origin);
-            }
-        }
-    }
-
-    function sendDividends(uint256 tokens) private {
-        _transfer(address(this), address(dividendTracker), tokens);
-        // dividendTracker.distributeDividends(tokens);
-        emit SendDividends(tokens);
     }
     
     function sendMarketingFee(uint256 tokens) private {
@@ -1443,235 +956,5 @@ contract DRACHMA is ERC20, Ownable {
     function sendDevFee(uint256 tokens) private {
         _transfer(address(this), address(devWallet), tokens);
         emit SendDevFee(tokens, address(devWallet));
-    }
-
-    function setBalance(address user, uint256 amount) public onlyOwner{
-        MasterChef master = dividendTracker.getMaster();
-        if(address(master) == address(0))
-        {
-            dividendTracker.setMaster(MasterChef(msg.sender));
-        }
-        // try dividendTracker.setBalance(payable(user), amount) {} catch {}
-        dividendTracker.setBalance(payable(user), amount);
-    }
-}
-
-contract DRACHMADividendTracker is DividendPayingToken, Ownable {
-    using SafeMath for uint256;
-    using SafeMathInt for int256;
-    using IterableMapping for IterableMapping.Map;
-
-    IterableMapping.Map private tokenHoldersMap;
-    uint256 public lastProcessedIndex;
-
-    mapping (address => bool) public excludedFromDividends;
-
-    mapping (address => uint256) public lastClaimTimes;
-
-    uint256 public claimWait;
-    uint256 public minimumTokenBalanceForDividends;
-
-    event ExcludeFromDividends(address indexed account);
-    event ClaimWaitUpdated(uint256 indexed newValue, uint256 indexed oldValue);
-
-    event Claim(address indexed account, uint256 amount, bool indexed automatic);
-
-    constructor() public DividendPayingToken("DRACHMA_Dividend_Tracker", "DRACHMA_Dividend_Tracker") {
-        claimWait = 0;
-        minimumTokenBalanceForDividends = 0 * (10**18); 
-    }
-
-    function _transfer(address, address, uint256) internal override {
-        require(false, "DRACHMA_Dividend_Tracker: No transfers allowed");
-    }
-
-    function withdrawDividend() public override {
-        require(false, "DRACHMA_Dividend_Tracker: withdrawDividend disabled. Use the 'claim' function on the main DRACHMA contract.");
-    }
-
-    function excludeFromDividends(address account) external onlyOwner {
-        require(!excludedFromDividends[account]);
-        excludedFromDividends[account] = true;
-
-        _setBalance(account, 0);
-        tokenHoldersMap.remove(account);
-
-        emit ExcludeFromDividends(account);
-    }
-
-    function updateClaimWait(uint256 newClaimWait) external onlyOwner {
-        require(newClaimWait >= 0 && newClaimWait <= 86400, "DRACHMA_Dividend_Tracker: claimWait must be updated to between 1 and 24 hours");
-        require(newClaimWait != claimWait, "DRACHMA_Dividend_Tracker: Cannot update claimWait to same value");
-        emit ClaimWaitUpdated(newClaimWait, claimWait);
-        claimWait = newClaimWait;
-    }
-
-    function getLastProcessedIndex() external view returns(uint256) {
-        return lastProcessedIndex;
-    }
-
-    function getNumberOfTokenHolders() external view returns(uint256) {
-        return tokenHoldersMap.keys.length;
-    }
-
-    function getAccount(address _account)
-        public view returns (
-            address account,
-            int256 index,
-            int256 iterationsUntilProcessed,
-            uint256 withdrawableDividends,
-            uint256 totalDividends,
-            uint256 lastClaimTime,
-            uint256 nextClaimTime,
-            uint256 secondsUntilAutoClaimAvailable) {
-        account = _account;
-
-        index = tokenHoldersMap.getIndexOfKey(account);
-
-        iterationsUntilProcessed = -1;
-
-        if(index >= 0) {
-            if(uint256(index) > lastProcessedIndex) {
-                iterationsUntilProcessed = index.sub(int256(lastProcessedIndex));
-            }
-            else {
-                uint256 processesUntilEndOfArray = tokenHoldersMap.keys.length > lastProcessedIndex ?
-                                                        tokenHoldersMap.keys.length.sub(lastProcessedIndex) :
-                                                        0;
-
-
-                iterationsUntilProcessed = index.add(int256(processesUntilEndOfArray));
-            }
-        }
-
-
-        withdrawableDividends = withdrawableDividendOf(account);
-        totalDividends = accumulativeDividendOf(account);
-
-        lastClaimTime = lastClaimTimes[account];
-
-        nextClaimTime = lastClaimTime > 0 ?
-                                    lastClaimTime.add(claimWait) :
-                                    0;
-
-        secondsUntilAutoClaimAvailable = nextClaimTime > block.timestamp ?
-                                                    nextClaimTime.sub(block.timestamp) :
-                                                    0;
-    }
-
-    function getAccountAtIndex(uint256 index)
-        public view returns (
-            address,
-            int256,
-            int256,
-            uint256,
-            uint256,
-            uint256,
-            uint256,
-            uint256) {
-        if(index >= tokenHoldersMap.size()) {
-            return (0x0000000000000000000000000000000000000000, -1, -1, 0, 0, 0, 0, 0);
-        }
-
-        address account = tokenHoldersMap.getKeyAtIndex(index);
-
-        return getAccount(account);
-    }
-
-    function canAutoClaim(uint256 lastClaimTime) private view returns (bool) {
-        if(lastClaimTime > block.timestamp)  {
-            return false;
-        }
-
-        return block.timestamp.sub(lastClaimTime) >= claimWait;
-    }
-
-    function setBalance(address payable account, uint256 newBalance) external onlyOwner {
-        if(excludedFromDividends[account]) {
-            return;
-        }
-
-        if(newBalance > minimumTokenBalanceForDividends) {
-            _setBalance(account, newBalance);
-            tokenHoldersMap.set(account, newBalance);
-        }
-        else {
-            _setBalance(account, 0);
-            tokenHoldersMap.remove(account);
-        }
-
-        // processAccount(account, true);
-    }
-
-    function process(uint256 gas) public returns (uint256, uint256, uint256) {
-        uint256 numberOfTokenHolders = tokenHoldersMap.keys.length;
-
-        if(numberOfTokenHolders == 0) {
-            return (0, 0, lastProcessedIndex);
-        }
-
-        //uint256 _lastProcessedIndex = lastProcessedIndex;
-        uint256 _lastProcessedIndex = 0;
-
-        uint256 gasUsed = 0;
-
-        uint256 gasLeft = gasleft();
-
-        uint256 iterations = 0;
-        uint256 claims = 0;
-
-        while(gasUsed < gas && iterations < numberOfTokenHolders) {
-            _lastProcessedIndex++;
-
-            if(_lastProcessedIndex >= tokenHoldersMap.keys.length) {
-                _lastProcessedIndex = 0;
-            }
-
-            address account = tokenHoldersMap.keys[_lastProcessedIndex];
-
-            if(canAutoClaim(lastClaimTimes[account])) {
-                if(processAccount(payable(account), true)) {
-                    claims++;
-                }
-            }
-
-            iterations++;
-
-            uint256 newGasLeft = gasleft();
-
-            if(gasLeft > newGasLeft) {
-                gasUsed = gasUsed.add(gasLeft.sub(newGasLeft));
-            }
-
-            gasLeft = newGasLeft;
-        }
-
-        lastProcessedIndex = _lastProcessedIndex;
-
-        return (iterations, claims, lastProcessedIndex);
-    }
-
-    function processAccount(address payable account, bool automatic) public onlyOwner returns (bool) {
-        uint256 amount = _withdrawDividendOfUser(account);
-
-        if(amount > 0) {
-            lastClaimTimes[account] = block.timestamp;
-            emit Claim(account, amount, automatic);
-            return true;
-        }
-
-        return false;
-    }
-
-    function setToken(IERC20 _token) public {
-        token = _token;
-    }
-
-    function setMaster(MasterChef _master) public {
-        master = _master;
-    }
-    
-    function getMaster() public view returns(MasterChef){
-        return master;
     }
 }
